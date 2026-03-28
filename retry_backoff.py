@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
-"""Retry with exponential backoff and jitter."""
+"""retry_backoff - Retry with exponential backoff."""
 import sys,time,random
-def retry(func,max_retries=5,base_delay=0.1,max_delay=30,jitter=True):
+def retry(fn,max_retries=5,base_delay=1,max_delay=60,backoff=2,jitter=True):
     for attempt in range(max_retries+1):
-        try: return func()
+        try:return fn()
         except Exception as e:
-            if attempt==max_retries: raise
-            delay=min(base_delay*(2**attempt),max_delay)
-            if jitter: delay*=random.uniform(0.5,1.5)
-            print(f"  Attempt {attempt+1} failed: {e}. Retrying in {delay:.2f}s...")
+            if attempt==max_retries:raise
+            delay=min(base_delay*(backoff**attempt),max_delay)
+            if jitter:delay*=random.uniform(0.5,1.5)
+            print(f"  Attempt {attempt+1} failed: {e}, retrying in {delay:.1f}s")
             time.sleep(delay)
-def main():
-    random.seed(42);fails=[0]
-    def unreliable():
-        fails[0]+=1
-        if fails[0]<=3: raise ConnectionError(f"timeout (attempt {fails[0]})")
-        return f"Success after {fails[0]} attempts"
-    result=retry(unreliable,max_retries=5,base_delay=0.01)
-    print(f"Result: {result}")
-if __name__=="__main__": main()
+def with_timeout(fn,timeout):
+    import threading
+    result=[None];error=[None];done=threading.Event()
+    def wrapper():
+        try:result[0]=fn()
+        except Exception as e:error[0]=e
+        done.set()
+    t=threading.Thread(target=wrapper);t.start();done.wait(timeout)
+    if not done.is_set():raise TimeoutError(f"Timed out after {timeout}s")
+    if error[0]:raise error[0]
+    return result[0]
+if __name__=="__main__":
+    attempts=[0]
+    def flaky():
+        attempts[0]+=1
+        if attempts[0]<4:raise ConnectionError(f"Attempt {attempts[0]} failed")
+        return "Success!"
+    result=retry(flaky,max_retries=5,base_delay=0.1)
+    print(f"Result: {result} after {attempts[0]} attempts")
